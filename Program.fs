@@ -1,91 +1,134 @@
-﻿module Program
+﻿namespace ServerSpa
+
+open System
+open System.Text.Json
+open System.Text.Json.Serialization
+open System.Threading.Tasks
+
+open FSharp.Control.Tasks
+
+open Microsoft.AspNetCore.Http
+
+open Giraffe
+open Giraffe.Serialization
 
 open Saturn.Application
 open Saturn.Pipeline
 open Saturn.PipelineHelpers
-open Saturn.Router
-open Giraffe.ResponseWriters
-open Giraffe.Core
-open Giraffe.ModelBinding
-open Microsoft.AspNetCore.Http
-open Feliz.ViewEngine
-open FSharp.Control.Tasks
-open Model
+open Saturn.CSRF
+open Saturn.Endpoint
 
-let setTurbolinksLocationHeader: HttpHandler =
-    let isTurbolink (ctx: HttpContext) =
-        ctx.Request.Headers.ContainsKey "Turbolinks-Referrer"
+open ServerSpa.Pages
 
-    fun next ctx ->
-        task {
-            if isTurbolink ctx
-            then ctx.SetHttpHeader "Turbolinks-Location" (ctx.Request.Path + ctx.Request.QueryString)
+module Program =
+    let setTurbolinksLocationHeader: HttpHandler =
+        let isTurbolink (ctx: HttpContext) =
+            ctx.Request.Headers.ContainsKey "Turbolinks-Referrer"
 
-            return! next ctx
+        fun next ctx ->
+            task {
+                if isTurbolink ctx
+                then ctx.SetHttpHeader "Turbolinks-Location" (ctx.Request.Path + ctx.Request.QueryString)
+
+                return! next ctx
+            }
+
+    let browser =
+        pipeline {
+            plug putSecureBrowserHeaders
+            set_header "x-pipeline-type" "Browser"
+            plug setTurbolinksLocationHeader
         }
 
-let browser =
-    pipeline {
-        plug putSecureBrowserHeaders
-        set_header "x-pipeline-type" "Browser"
-        plug setTurbolinksLocationHeader
-    }
+    let defaultView =
+        router {
+            get "/" Auth.Login
+            get "/index.html" (redirectTo false "/")
+            get "/default.html" (redirectTo false "/")
 
-let private htmx (layout: ReactElement) next (context: HttpContext) =
+        }
 
-    let isHtmx =
-        context.Request.Headers.ContainsKey("HX-Request")
+    let authRouter =
+        router {
+            get "/signup" Auth.SignUp
+            post "/signup" (csrf >=> Auth.ProcessSignup)
+            post "/login" (csrf >=> Auth.ProcessLogin)
+        }
 
-    if isHtmx
-    then htmlString (layout |> Render.htmlView) next context
-    else htmlString (layout |> Render.htmlDocument) next context
+    let profileRouter =
+        router {
+            get
+                "/"
+                (requiresAuthentication Layouts.Forbidden
+                 >=> Profile.Index)
 
-let defaultView =
-    router {
-        get "/" (htmx Index.layout)
-        get "/index.html" (redirectTo false "/")
-        get "/default.html" (redirectTo false "/")
-    }
+            get
+                "/edit"
+                (requiresAuthentication Layouts.Forbidden
+                 >=> Profile.EditUserInfoPartial)
 
-let timeHandler next context =
-    context
-    |> htmx (DynamicView.timeLayout (System.DateTime.Now.ToString())) next
+            post
+                "/save"
+                (requiresAuthentication Layouts.Forbidden
+                 >=> csrf
+                 >=> Profile.UserInfoPartial)
+        }
 
-let dynamicViewHandler next context =
-    htmx (DynamicView.layout (System.DateTime.Now.ToString())) next context
+    let browserRouter =
+        router {
+            pipe_through browser
 
-let nameHandler next (context: HttpContext) =
-    let name = context.TryGetQueryStringValue "name"
+            forward "" defaultView
+            forward "/auth" authRouter
+            forward "/profile" profileRouter
+        }
 
-    htmx (DynamicView.greetingLayout name) next context
+    let private JsonSerializer =
+        let opts = JsonSerializerOptions()
+        opts.AllowTrailingCommas <- true
+        opts.ReadCommentHandling <- JsonCommentHandling.Skip
+        opts.IgnoreNullValues <- true
+        opts.Converters.Add(JsonFSharpConverter())
 
-let modelHandler next (context: HttpContext) =
-    task {
-        let! model = context.BindFormAsync<PostModel>()
-        return! htmx (DynamicView.modelLayout model) next context
-    }
+        { new IJsonSerializer with
+            member this.Deserialize<'T>(arg1: byte []): 'T =
+                let spn = ReadOnlySpan(arg1)
+                JsonSerializer.Deserialize<'T>(spn, opts)
 
+            member this.Deserialize<'T>(arg1: string): 'T =
+                JsonSerializer.Deserialize<'T>(arg1, opts)
 
-let browserRouter =
-    router {
-        pipe_through browser
+            member this.DeserializeAsync(arg1: System.IO.Stream): Task<'T> =
+                JsonSerializer
+                    .DeserializeAsync<'T>(arg1, opts)
+                    .AsTask()
 
-        forward "" defaultView
-        get "/otherView" (htmx OtherView.layout)
-        get "/dynamicView" dynamicViewHandler
-        get "/time" timeHandler
-        get "/name" nameHandler
-        post "/model" modelHandler
-    }
+            member this.SerializeToBytes<'T>(arg1: 'T): byte array =
+                JsonSerializer.SerializeToUtf8Bytes(arg1, opts)
 
+            member this.SerializeToStreamAsync<'T> (arg1: 'T) (arg2: System.IO.Stream): Task =
+                JsonSerializer.SerializeAsync(arg2, arg1, opts)
 
-let app =
-    application {
-        use_router browserRouter
-        use_gzip
-    }
+            member this.SerializeToString<'T>(arg1: 'T): string =
+                JsonSerializer.Serialize(arg1, typeof<'T>, opts) }
 
-[<EntryPoint>]
-let main _ =
-    run app
-    0 // return an integer exit code
+    let app =
+        application {
+            use_endpoint_router browserRouter
+
+            use_antiforgery_with_config
+                (fun cfg ->
+                    cfg.HeaderName <- "XSRF-TOKEN"
+                    cfg.Cookie.Name <- "XSRF-TOKEN")
+
+            use_cookies_authentication "http://localhost:5001"
+            use_json_serializer JsonSerializer
+            use_static "wwwroot"
+            use_developer_exceptions
+            use_gzip
+        }
+
+    [<EntryPoint>]
+    let main _ =
+        run app
+        0 // return an integer exit code
