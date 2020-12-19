@@ -1,5 +1,6 @@
 namespace ServerSpa.Pages
 
+open Microsoft.AspNetCore.Antiforgery
 open Microsoft.AspNetCore.Http
 
 open Giraffe
@@ -13,13 +14,50 @@ open FSharp.Control.Tasks
 
 open ServerSpa
 open ServerSpa.Components
-open Microsoft.AspNetCore.Antiforgery
 
 [<RequireQualifiedAccess>]
 module Profile =
-    let private infoPartial =
+    let private infoPartial (user: User) (flash: ReactElement option) =
+        let flash = defaultArg flash Html.none
         let cardHeader = CardHeader "My Profile" None |> Some
-        let cardContent = Html.div [ id "#content"; children [] ]
+
+        let cardContent =
+            Html.div [
+                id "#content"
+                children [
+                    Html.p [
+                        children [
+                            Html.label [
+                                className "label"
+                                text "Unique Id:"
+                            ]
+                            Html.text user._id
+                        ]
+
+                    ]
+                    Html.p [
+                        children [
+                            Html.label [
+                                className "label"
+                                text "Name"
+                            ]
+                            Html.text user.name
+                        ]
+
+                    ]
+                    Html.p [
+                        children [
+                            Html.label [
+                                className "label"
+                                text "Email"
+                            ]
+                            Html.text user.email
+                        ]
+                    ]
+
+                ]
+
+            ]
 
         let footer =
             CardActionsFooter [
@@ -36,6 +74,7 @@ module Profile =
         Html.article [
             id "infopartial"
             children [
+                flash
                 CustomCard cardContent cardHeader footer
             ]
         ]
@@ -46,7 +85,13 @@ module Profile =
                 let content =
                     Html.div [
                         className "container"
-                        children [ infoPartial ]
+                        children [
+                            infoPartial
+                                { _id = 1
+                                  name = "Sample"
+                                  email = "sample@serverspa.com" }
+                                None
+                        ]
                     ]
 
                 Layouts.Default content
@@ -54,7 +99,35 @@ module Profile =
             Helpers.htmx html next ctx
 
     let UserInfoPartial =
-        fun (next: HttpFunc) (ctx: HttpContext) -> task { return! Helpers.htmx infoPartial next ctx }
+        fun (next: HttpFunc) (ctx: HttpContext) ->
+            task {
+                let! user = ctx.TryBindFormAsync<UserDTO>()
+
+                match user with
+                | Ok user ->
+                    return!
+                        Helpers.htmx
+                            (infoPartial
+                                { _id = 1
+                                  name = user.name
+                                  email = user.email }
+                                None)
+                            next
+                            ctx
+                | Error err ->
+                    let flash =
+                        Flash err (Some ActionType.Warning) |> Some
+
+                    return!
+                        Helpers.htmx
+                            (infoPartial
+                                { _id = 1
+                                  name = "Sample"
+                                  email = "sample@serverspa.com" }
+                                flash)
+                            next
+                            ctx
+            }
 
     let EditUserInfoPartial =
         fun (next: HttpFunc) (ctx: HttpContext) ->
@@ -62,20 +135,61 @@ module Profile =
                 let antiforgery = ctx.GetService<IAntiforgery>()
 
                 let html =
-                    let cardHeader = CardHeader "My Profile" None |> Some
+                    let cardHeader =
+                        CardHeader "Update My Profile" None |> Some
 
                     let cardContent =
+                        let nameSection =
+                            Html.section [
+                                className "field"
+                                children [
+                                    Html.label [
+                                        className "label"
+                                        text "Name"
+                                    ]
+                                    Html.div [
+                                        className "control"
+                                        children [
+                                            Html.input [
+                                                className "input"
+                                                type' "text"
+                                                name "name"
+                                                id "name"
+                                                value "Sample"
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
+
+                        let emailSection =
+                            Html.section [
+                                className "field"
+                                children [
+                                    Html.label [
+                                        className "label"
+                                        text "Email"
+                                    ]
+                                    Html.div [
+                                        className "control"
+                                        children [
+                                            Html.input [
+                                                className "input"
+                                                type' "email"
+                                                name "email"
+                                                id "email"
+                                                value "sample@serverspa.com"
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
+
                         Html.div [
                             children [
                                 Html.form [
                                     id "editform"
-                                    children [
-                                        Html.input [
-                                            type' "text"
-                                            name "name"
-                                            id "name"
-                                        ]
-                                    ]
+                                    children [ nameSection; emailSection ]
                                 ]
                             ]
                         ]

@@ -128,6 +128,7 @@ module Auth =
 
         Html.form [
             custom ("hx-post", (if isLogin then "/auth/login" else "/auth/signup"))
+            custom ("hx-target", "body")
             className "box"
             children [
                 nameField

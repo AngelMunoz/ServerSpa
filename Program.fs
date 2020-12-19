@@ -83,35 +83,6 @@ module Program =
             forward "/profile" profileRouter
         }
 
-    let private JsonSerializer =
-        let opts = JsonSerializerOptions()
-        opts.AllowTrailingCommas <- true
-        opts.ReadCommentHandling <- JsonCommentHandling.Skip
-        opts.IgnoreNullValues <- true
-        opts.Converters.Add(JsonFSharpConverter())
-
-        { new IJsonSerializer with
-            member this.Deserialize<'T>(arg1: byte []): 'T =
-                let spn = ReadOnlySpan(arg1)
-                JsonSerializer.Deserialize<'T>(spn, opts)
-
-            member this.Deserialize<'T>(arg1: string): 'T =
-                JsonSerializer.Deserialize<'T>(arg1, opts)
-
-            member this.DeserializeAsync(arg1: System.IO.Stream): Task<'T> =
-                JsonSerializer
-                    .DeserializeAsync<'T>(arg1, opts)
-                    .AsTask()
-
-            member this.SerializeToBytes<'T>(arg1: 'T): byte array =
-                JsonSerializer.SerializeToUtf8Bytes(arg1, opts)
-
-            member this.SerializeToStreamAsync<'T> (arg1: 'T) (arg2: System.IO.Stream): Task =
-                JsonSerializer.SerializeAsync(arg2, arg1, opts)
-
-            member this.SerializeToString<'T>(arg1: 'T): string =
-                JsonSerializer.Serialize(arg1, typeof<'T>, opts) }
-
     let app =
         application {
             use_endpoint_router browserRouter
@@ -122,7 +93,6 @@ module Program =
                     cfg.Cookie.Name <- "XSRF-TOKEN")
 
             use_cookies_authentication "http://localhost:5001"
-            use_json_serializer JsonSerializer
             use_static "wwwroot"
             use_developer_exceptions
             use_gzip
