@@ -1,16 +1,10 @@
 ﻿namespace ServerSpa
 
-open System
-open System.Text.Json
-open System.Text.Json.Serialization
-open System.Threading.Tasks
-
 open FSharp.Control.Tasks
 
 open Microsoft.AspNetCore.Http
 
 open Giraffe
-open Giraffe.Serialization
 
 open Saturn.Application
 open Saturn.Pipeline
